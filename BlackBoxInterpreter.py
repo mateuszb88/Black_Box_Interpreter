@@ -217,7 +217,19 @@ class BlackBoxInterpreter:
             for e in self.y_max_entries:
                 e.delete(0, tk.END)
 
-            self.extract_parameters(content)
+            # --- AUTOMATYCZNA DETEKCJA SEPARATORA ---
+            detected_delimiter = ';' # domyślny
+            # Szukamy linii "Event Index" i sprawdzamy co jest po niej
+            for line in content.splitlines():
+                if line.startswith("Event Index"):
+                    if ";" in line:
+                        detected_delimiter = ';'
+                    elif "," in line:
+                        detected_delimiter = ','
+                    break
+            
+            # Uruchomienie parsowania z wykrytym separatorem
+            self.extract_parameters(content, detected_delimiter)
 
             for cb in self.combos:
                 cb['values'] = self.event_waveform_names
@@ -408,7 +420,10 @@ class BlackBoxInterpreter:
         else:
             self.scroll_x.set(0, 1) 
 
-    def extract_parameters(self, content):
+    def extract_parameters(self, content, delimiter):
+        """
+        Parsuje parametry przy użyciu wykrytego separatora.
+        """
         self.general_params = []
         self.event_data_names = []
         self.event_waveform_names = []
@@ -430,7 +445,7 @@ class BlackBoxInterpreter:
                 if data_line_count == 1:
                     val = "BRAK"
                     first_line = current_data_lines[0]
-                    parts = first_line.split(';')
+                    parts = first_line.split(delimiter)
                     valid_values = [p for p in parts[1:] if p.strip()]
                     if valid_values:
                         val = valid_values[0].strip()
@@ -439,7 +454,7 @@ class BlackBoxInterpreter:
                 # --- PARAMETR ZDARZEŃ ---
                 elif data_line_count > 1:
                     first_line = current_data_lines[0]
-                    parts = first_line.split(';')
+                    parts = first_line.split(delimiter)
                     valid_values = [p for p in parts[1:] if p.strip()]
                     values_count_in_line = len(valid_values)
 
@@ -448,7 +463,7 @@ class BlackBoxInterpreter:
                         self.event_data_names.append(current_param_name)
                         values_map = {}
                         for dline in current_data_lines:
-                            dparts = dline.split(';')
+                            dparts = dline.split(delimiter)
                             if len(dparts) >= 2:
                                 idx = dparts[0].strip()
                                 val = dparts[1].strip()
@@ -461,7 +476,7 @@ class BlackBoxInterpreter:
                         self.event_waveform_names.append(current_param_name)
                         waveform_map = {}
                         for dline in current_data_lines:
-                            dparts = dline.split(';')
+                            dparts = dline.split(delimiter)
                             idx = dparts[0].strip()
                             if not idx:
                                 continue
@@ -469,7 +484,11 @@ class BlackBoxInterpreter:
                             for v_str in dparts[1:]:
                                 v_clean = v_str.strip()
                                 if v_clean:
-                                    v_clean = v_clean.replace(',', '.')
+                                    # Inteligentna konwersja float w zależności od separatora
+                                    # Jeśli separator to ; (Polska), to decimal to prawdopodobnie ,
+                                    if delimiter == ';':
+                                        v_clean = v_clean.replace(',', '.')
+                                    
                                     try:
                                         val_float = float(v_clean)
                                         numeric_values.append(val_float)
@@ -479,11 +498,12 @@ class BlackBoxInterpreter:
                         self.event_waveform_values_map[current_param_name] = waveform_map
 
         for line in lines:
-            is_separator_line = (line.replace(';', '').strip() == "")
+            # Sprawdzanie pustej linii używając wykrytego separatora
+            is_separator_line = (line.replace(delimiter, '').strip() == "")
 
             if line.startswith("Event Index"):
                 close_section()
-                parts = line.split(';')
+                parts = line.split(delimiter)
                 if len(parts) >= 2:
                     current_param_name = parts[1].strip()
                 else:
@@ -510,7 +530,7 @@ class BlackBoxInterpreter:
         if self.general_params:
             for name, val, count in self.general_params:
                 self.params_text.insert(tk.END, f"{name}: ")
-                self.params_text.insert(tk.END, f"{val}\n", "value") # ZMIANA: Usunięto (ilość: count)
+                self.params_text.insert(tk.END, f"{val}\n", "value")
         else:
             self.params_text.insert(tk.END, "(brak)\n")
         self.params_text.insert(tk.END, "\n")
