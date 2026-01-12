@@ -1,4 +1,4 @@
-('c:\\MBA\\Python_Projects\\BlackBoxInterpreter\\build\\BlackBoxInterpreter\\PYZ-00.pyz',
+('C:\\MBA\\Python_Projects\\BlackBoxInterpreter\\build\\BlackBoxInterpreter\\PYZ-00.pyz',
  [('PIL',
    'C:\\Users\\Mateusz\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PIL\\__init__.py',
    'PYMODULE'),
