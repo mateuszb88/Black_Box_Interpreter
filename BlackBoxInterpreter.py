@@ -4,6 +4,8 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.ticker import MaxNLocator
+import csv
+import io # Dodano do obsługi strumienia tekstu dla csv.reader
 
 # Ustawienie backendu dla matplotlib
 matplotlib.use("TkAgg")
@@ -61,7 +63,6 @@ class BlackBoxInterpreter:
         
         file_menu = tk.Menu(menubar, tearoff=0)
         file_menu.add_command(label="Załaduj plik alarmów", command=self.load_alarm_file)
-        # ZMIANA: Zmiana nazwy i podpięcie funkcji
         file_menu.add_command(label="Załaduj plik przebiegów", command=self.load_waveform_file)
         file_menu.add_separator()
         file_menu.add_command(label="Wyjście", command=self.root.quit)
@@ -75,8 +76,6 @@ class BlackBoxInterpreter:
 
     def setup_tab_general(self):
         """Konfiguracja zakładki 'Lista ogólna' - podział 50/50 Grid."""
-        
-        # Konfiguracja siatki dla idealnego podziału 50/50
         self.tab_general.grid_columnconfigure(0, weight=1, uniform="group1")
         self.tab_general.grid_columnconfigure(1, weight=1, uniform="group1")
         self.tab_general.grid_rowconfigure(0, weight=1)
@@ -288,7 +287,7 @@ class BlackBoxInterpreter:
         self.scroll_x = tk.Scrollbar(self.right_bottom_frame, orient="horizontal", command=self.on_scroll_change)
         self.scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
 
-        self.notebook.select(self.tab_waveforms)
+        self.notebook.select(self.tab_general)
 
     def configure_text_tags(self, text_widget):
         text_widget.tag_config("header", foreground="blue", font=("Arial", 10, "bold"))
@@ -390,35 +389,32 @@ class BlackBoxInterpreter:
             messagebox.showerror("Błąd", f"Nie udało się przetworzyć pliku:\n{e}")
 
     def update_alarm_panel(self, data):
-        """Aktualizuje tekst w lewym panelu zakładki 'Lista ogólna'."""
         self.text_alarms_list.delete(1.0, tk.END)
         event_list_text = self.generate_event_list_text(data['data_map'])
         if event_list_text:
             lines = event_list_text.splitlines()
             if lines:
                 self.text_alarms_list.insert(tk.END, lines[0] + "\n", "table_header")
-                for line in lines[1:]:
+                self.text_alarms_list.insert(tk.END, lines[1] + "\n", "table_header") # Separator
+                for line in lines[2:]:
                     self.text_alarms_list.insert(tk.END, line + "\n", "list_item")
         else:
             self.text_alarms_list.insert(tk.END, "(brak danych zdarzeń)", "info")
 
     def update_waveform_panel_preview(self, data):
-        """Aktualizuje tekst w prawym panelu zakładki 'Lista ogólna'."""
         self.text_waveforms_list_preview.delete(1.0, tk.END)
         event_list_text = self.generate_event_list_text(data['data_map'])
         if event_list_text:
             lines = event_list_text.splitlines()
             if lines:
                 self.text_waveforms_list_preview.insert(tk.END, lines[0] + "\n", "table_header")
-                for line in lines[1:]:
+                self.text_waveforms_list_preview.insert(tk.END, lines[1] + "\n", "table_header") # Separator
+                for line in lines[2:]:
                     self.text_waveforms_list_preview.insert(tk.END, line + "\n", "list_item")
         else:
             self.text_waveforms_list_preview.insert(tk.END, "(brak danych zdarzeń)", "info")
 
     def generate_event_list_text(self, value_map):
-        """
-        Generuje sformatowany tekst listy zdarzeń (tabela z wyrównaniem).
-        """
         target_keys = {
             "dt": "date time",
             "da": "device alarm",
@@ -426,14 +422,12 @@ class BlackBoxInterpreter:
         }
         found_params = {} 
 
-        # 1. Mapowanie kluczy
         for real_name in value_map.keys():
             real_name_lower = real_name.lower()
             for key, target in target_keys.items():
                 if target in real_name_lower:
                     found_params[key] = real_name
         
-        # 2. Zbieranie indeksów
         all_indices = set()
         for real_name in found_params.values():
             if real_name in value_map:
@@ -448,17 +442,15 @@ class BlackBoxInterpreter:
         if not sorted_indices:
             return None
 
-        # 3. Przygotowanie danych do tabeli (lista list)
+        # --- Przygotowanie danych do tabeli ---
         table_data = []
         
-        # Nagłówki
         headers = ["[Index]"]
         if 'dt' in found_params: headers.append("Date Time")
         if 'da' in found_params: headers.append("Device Alarm")
         if 'id' in found_params: headers.append("ID")
         table_data.append(headers)
 
-        # Wiersze danych
         for idx in sorted_indices:
             row = [f"[{idx}]"]
             if 'dt' in found_params:
@@ -469,27 +461,27 @@ class BlackBoxInterpreter:
                 row.append(value_map[found_params['id']].get(idx, ""))
             table_data.append(row)
 
-        # 4. Obliczanie szerokości kolumn
+        # --- Obliczanie szerokości kolumn ---
         col_widths = [0] * len(headers)
         for row in table_data:
             for i, val in enumerate(row):
                 if len(val) > col_widths[i]:
                     col_widths[i] = len(val)
 
-        # 5. Formatowanie (padding + separator)
+        # --- Formatowanie ---
         formatted_lines = []
         
-        # Formatowanie nagłówka
+        # Nagłówek
         header_row = table_data[0]
         header_str = " | ".join(val.ljust(width) for val, width in zip(header_row, col_widths))
         formatted_lines.append(header_str)
         
-        # Separator (opcjonalnie, dla lepszej czytelności)
+        # Separator
         separator_row = ["-" * width for width in col_widths]
         separator_str = "-+-".join(separator_row)
         formatted_lines.append(separator_str)
 
-        # Formatowanie danych
+        # Dane
         for row in table_data[1:]:
             line_str = " | ".join(val.ljust(width) for val, width in zip(row, col_widths))
             formatted_lines.append(line_str)
@@ -503,38 +495,40 @@ class BlackBoxInterpreter:
         data_map = {}
         waveform_map = {}
 
-        lines = content.splitlines()
+        # Używamy strumienia IO dla csv.reader
+        f = io.StringIO(content)
+        reader = csv.reader(f, delimiter=delimiter)
+
         current_param_name = None
-        current_data_lines = []
+        current_data_rows = [] # Przechowujemy listy pól, nie linie tekstu
 
         def close_section():
             nonlocal current_param_name
             if current_param_name is not None:
-                data_line_count = len(current_data_lines)
+                data_line_count = len(current_data_rows)
 
                 if data_line_count == 1:
                     val = "BRAK"
-                    first_line = current_data_lines[0]
-                    parts = first_line.split(delimiter)
-                    valid_values = [p for p in parts[1:] if p.strip()]
+                    first_row = current_data_rows[0]
+                    # first_row to lista pól [Index, Value1, Value2...]
+                    valid_values = [p for p in first_row[1:] if p.strip()]
                     if valid_values:
                         val = valid_values[0].strip()
                     general.append((current_param_name, val, len(valid_values)))
                 
                 elif data_line_count > 1:
-                    first_line = current_data_lines[0]
-                    parts = first_line.split(delimiter)
-                    valid_values = [p for p in parts[1:] if p.strip()]
+                    first_row = current_data_rows[0]
+                    valid_values = [p for p in first_row[1:] if p.strip()]
                     values_count_in_line = len(valid_values)
 
                     if values_count_in_line == 1:
                         data_names.append(current_param_name)
                         v_map = {}
-                        for dline in current_data_lines:
-                            dparts = dline.split(delimiter)
-                            if len(dparts) >= 2:
-                                idx = dparts[0].strip()
-                                val = dparts[1].strip()
+                        for row in current_data_rows:
+                            # Zakładamy format: [Index, Value]
+                            if len(row) >= 2:
+                                idx = row[0].strip()
+                                val = row[1].strip()
                                 if idx:
                                     v_map[idx] = val
                         data_map[current_param_name] = v_map
@@ -542,13 +536,12 @@ class BlackBoxInterpreter:
                     else:
                         waveform_names.append(current_param_name)
                         w_map = {}
-                        for dline in current_data_lines:
-                            dparts = dline.split(delimiter)
-                            idx = dparts[0].strip()
+                        for row in current_data_rows:
+                            idx = row[0].strip()
                             if not idx:
                                 continue
                             numeric_values = []
-                            for v_str in dparts[1:]:
+                            for v_str in row[1:]:
                                 v_clean = v_str.strip()
                                 if v_clean:
                                     if delimiter == ';':
@@ -561,26 +554,29 @@ class BlackBoxInterpreter:
                             w_map[idx] = numeric_values
                         waveform_map[current_param_name] = w_map
 
-        for line in lines:
-            is_separator_line = (line.replace(delimiter, '').strip() == "")
+        for row in reader:
+            if not row: # Pusta linia w pliku (ale nie pusta lista pól)
+                continue
 
-            if line.startswith("Event Index"):
+            # Sprawdzenie czy wiersz to same separatory (puste stringi)
+            is_separator_line = not any(field.strip() for field in row)
+
+            if row[0].startswith("Event Index"):
                 close_section()
-                parts = line.split(delimiter)
-                if len(parts) >= 2:
-                    current_param_name = parts[1].strip()
+                if len(row) >= 2:
+                    current_param_name = row[1].strip()
                 else:
                     current_param_name = "Nieznany"
-                current_data_lines = []
+                current_data_rows = []
 
             elif is_separator_line:
                 close_section()
                 current_param_name = None
-                current_data_lines = []
+                current_data_rows = []
             
             else:
                 if current_param_name is not None:
-                    current_data_lines.append(line)
+                    current_data_rows.append(row)
 
         close_section()
         
@@ -610,7 +606,8 @@ class BlackBoxInterpreter:
             lines = event_list_text.splitlines()
             if lines:
                 self.text_main.insert(tk.END, lines[0] + "\n", "table_header")
-                for line in lines[1:]:
+                self.text_main.insert(tk.END, lines[1] + "\n", "table_header") # Separator
+                for line in lines[2:]:
                     self.text_main.insert(tk.END, line + "\n", "list_item")
         else:
              self.text_main.insert(tk.END, "(brak danych zdarzeń)\n", "info")
@@ -792,9 +789,6 @@ class BlackBoxInterpreter:
                 self.scroll_x.set(0, 1)
         else:
             self.scroll_x.set(0, 1) 
-
-    def dummy_action(self):
-        pass
 
 if __name__ == "__main__":
     root = tk.Tk()
