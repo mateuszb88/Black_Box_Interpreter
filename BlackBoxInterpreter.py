@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.ticker import MaxNLocator
 import csv
-import io # Dodano do obsługi strumienia tekstu dla csv.reader
+import io
 
 # Ustawienie backendu dla matplotlib
 matplotlib.use("TkAgg")
@@ -15,22 +15,30 @@ class BlackBoxInterpreter:
         self.root = root
         
         # --- WERSJA APLIKACJI ---
-        self.app_version = "1.0.0"
+        self.app_version = "1.1.0"
         self.root.title(f"Black Box Interpreter - ver. {self.app_version}")
         
+        # --- USTAWIENIA PROGRAMU ---
+        self.settings = {
+            'x_unit': 'Próbki',   # Opcje: 'Próbki', 'Czas'
+            'dt_short': 1.0,      # Mikrosekundy
+            'dt_long': 0.2,       # Mikrosekundy
+            'dropdown_len': 40    # Długość rozwinięcia listy
+        }
+
         # --- Struktury danych ---
         self.general_params = []
         self.event_data_names = []
-        self.event_waveform_names = []
+        self.event_waveform_names =[]
         
         self.event_data_values_map = {} 
         self.event_waveform_values_map = {} 
         
         # Stan widoku
-        self.current_selected_event_index = None
+        self.current_selected_event_index = "1"
         self.current_window_size = None 
-        self.current_view_start = 0     
-        self.max_data_length = 0        
+        self.current_view_start = 0.0     
+        self.max_x_value = 0.0 # Maksymalna wartość na osi X (próbki lub czas)
 
         # Maksymalizacja okna
         try:
@@ -65,6 +73,8 @@ class BlackBoxInterpreter:
         file_menu.add_command(label="Załaduj plik alarmów", command=self.load_alarm_file)
         file_menu.add_command(label="Załaduj plik przebiegów", command=self.load_waveform_file)
         file_menu.add_separator()
+        file_menu.add_command(label="Ustawienia", command=self.open_settings)
+        file_menu.add_separator()
         file_menu.add_command(label="Wyjście", command=self.root.quit)
         menubar.add_cascade(label="Plik", menu=file_menu)
 
@@ -75,7 +85,6 @@ class BlackBoxInterpreter:
         self.root.config(menu=menubar)
 
     def setup_tab_general(self):
-        """Konfiguracja zakładki 'Lista ogólna' - podział 50/50 Grid."""
         self.tab_general.grid_columnconfigure(0, weight=1, uniform="group1")
         self.tab_general.grid_columnconfigure(1, weight=1, uniform="group1")
         self.tab_general.grid_rowconfigure(0, weight=1)
@@ -114,7 +123,7 @@ class BlackBoxInterpreter:
         
         self.configure_text_tags(self.text_alarms_list)
 
-        # --- PANEL PRAWY (PRZEBIEGI - PODGLĄD LISTY) ---
+        # --- PANEL PRAWY (PRZEBIEGI) ---
         self.panel_waveforms_list = tk.Frame(self.tab_general, bg="#dcdcdc", padx=10, pady=10)
         self.panel_waveforms_list.grid(row=0, column=1, sticky="nsew")
 
@@ -149,19 +158,17 @@ class BlackBoxInterpreter:
         self.configure_text_tags(self.text_waveforms_list_preview)
 
     def setup_tab_waveforms(self):
-        """Konfiguracja zakładki 'Przebiegi'."""
         self.main_paned = tk.PanedWindow(self.tab_waveforms, orient=tk.HORIZONTAL, sashwidth=5, bg="#d0d0d0")
         self.main_paned.pack(fill=tk.BOTH, expand=True)
 
-        # 1. PANEL LEWY (Dane tekstowe + Przycisk)
+        # PANEL LEWY
         self.panel_data = tk.Frame(self.main_paned, bg="#e0e0e0", padx=10, pady=10)
         self.main_paned.add(self.panel_data, minsize=350) 
 
-        # 2. PANEL PRAWY (Wykresy i sterowanie)
+        # PANEL PRAWY
         self.right_frame = tk.Frame(self.main_paned, bg="white")
         self.main_paned.add(self.right_frame, minsize=400) 
 
-        # --- Podział Panelu Prawego (Góra/Dół) ---
         self.right_top_frame = tk.Frame(self.right_frame, height=160, bg="#f9f9f9", padx=10, pady=10)
         self.right_top_frame.pack(side=tk.TOP, fill=tk.X)
         self.right_top_frame.pack_propagate(False)
@@ -169,9 +176,7 @@ class BlackBoxInterpreter:
         self.right_bottom_frame = tk.Frame(self.right_frame, bg="white")
         self.right_bottom_frame.pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True)
 
-        # ================= ELEMENTY LEWEJ STRONY (PRZEBIEGI) =================
-        
-        # Przycisk
+        # ================= ELEMENTY LEWEJ STRONY =================
         self.upload_btn = tk.Button(
             self.panel_data, 
             text="Załaduj plik przebiegów", 
@@ -180,11 +185,8 @@ class BlackBoxInterpreter:
         )
         self.upload_btn.pack(pady=(10, 10))
 
-        # Etykieta
-        lbl_data = tk.Label(self.panel_data, text="Zawartość pliku:", bg="#e0e0e0", font=("Arial", 10, "bold"))
-        lbl_data.pack(anchor="w")
+        tk.Label(self.panel_data, text="Zawartość pliku:", bg="#e0e0e0", font=("Arial", 10, "bold")).pack(anchor="w")
 
-        # Kontener na tekst i scrollbary
         frame_text = tk.Frame(self.panel_data)
         frame_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, pady=5)
 
@@ -206,53 +208,52 @@ class BlackBoxInterpreter:
 
         self.configure_text_tags(self.text_main)
 
-        # ================= ELEMENTY PRAWEJ STRONY (Bez zmian) =================
-        
+        # ================= ELEMENTY PRAWEJ STRONY (Sterowanie) =================
         row1 = tk.Frame(self.right_top_frame, bg="#f9f9f9")
         row1.pack(side=tk.TOP, fill=tk.X, pady=5)
 
-        lbl_event_idx = tk.Label(row1, text="Numer zdarzenia:", bg="#f9f9f9", font=("Arial", 10))
-        lbl_event_idx.pack(side=tk.LEFT, padx=(0, 5))
-
+        tk.Label(row1, text="Numer zdarzenia:", bg="#f9f9f9", font=("Arial", 10)).pack(side=tk.LEFT, padx=(0, 5))
         self.entry_event_idx = tk.Spinbox(row1, from_=0, to=1000000, width=10)
+        self.entry_event_idx.delete(0, tk.END)
+        self.entry_event_idx.insert(0, "1")
         self.entry_event_idx.pack(side=tk.LEFT, padx=5)
 
         tk.Label(row1, text=" | ", bg="#f9f9f9", fg="gray").pack(side=tk.LEFT, padx=10)
 
-        lbl_range = tk.Label(row1, text="Zakres próbek (X):", bg="#f9f9f9", font=("Arial", 10))
-        lbl_range.pack(side=tk.LEFT, padx=(0, 5))
+        self.lbl_range = tk.Label(row1, text="Zakres (X):", bg="#f9f9f9", font=("Arial", 10))
+        self.lbl_range.pack(side=tk.LEFT, padx=(0, 5))
 
-        self.entry_sample_start = tk.Spinbox(row1, from_=0, to=1000000, width=6)
+        self.entry_sample_start = tk.Spinbox(row1, from_=0.0, to=10000000.0, increment=1.0, width=8)
         self.entry_sample_start.pack(side=tk.LEFT, padx=2)
 
         tk.Label(row1, text="-", bg="#f9f9f9").pack(side=tk.LEFT)
 
-        self.entry_sample_end = tk.Spinbox(row1, from_=0, to=1000000, width=6)
+        self.entry_sample_end = tk.Spinbox(row1, from_=0.0, to=10000000.0, increment=1.0, width=8)
         self.entry_sample_end.pack(side=tk.LEFT, padx=2)
 
         tk.Label(row1, text=" | ", bg="#f9f9f9", fg="gray").pack(side=tk.LEFT, padx=10)
 
-        btn_update = tk.Button(row1, text="Aktualizuj", command=self.on_update_click)
-        btn_update.pack(side=tk.LEFT, padx=5)
+        tk.Button(row1, text="Aktualizuj", command=self.on_update_click).pack(side=tk.LEFT, padx=5)
+        tk.Button(row1, text="Resetuj zakresy", command=self.reset_ranges).pack(side=tk.LEFT, padx=5)
+        tk.Button(row1, text="Ustawienia", command=self.open_settings).pack(side=tk.LEFT, padx=5)
 
-        btn_reset = tk.Button(row1, text="Resetuj zakresy", command=self.reset_ranges)
-        btn_reset.pack(side=tk.LEFT, padx=5)
-
+        # Wiersz 2 (Wykresy Y i Lista)
         row2 = tk.Frame(self.right_top_frame, bg="#f9f9f9")
         row2.pack(side=tk.TOP, fill=tk.X, pady=5)
 
         self.combos = []
-        self.y_min_entries = []
-        self.y_max_entries = []
+        self.y_min_entries =[]
+        self.y_max_entries =[]
 
-        for i in range(4):
+        # Tworzymy 5 sekcji
+        for i in range(5):
             col_frame = tk.Frame(row2, bg="#f9f9f9")
             col_frame.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
 
             lbl = tk.Label(col_frame, text=f"Przebieg {i+1}", bg="#f9f9f9", font=("Arial", 8, "bold"))
             lbl.pack(side=tk.TOP, anchor="w")
 
-            cb = ttk.Combobox(col_frame, state="readonly", width=15)
+            cb = ttk.Combobox(col_frame, state="readonly", width=15, height=self.settings['dropdown_len'])
             cb.pack(side=tk.TOP, fill=tk.X)
             self.combos.append(cb)
 
@@ -260,22 +261,22 @@ class BlackBoxInterpreter:
             y_frame.pack(side=tk.TOP, fill=tk.X, pady=2)
 
             tk.Label(y_frame, text="Y:", bg="#f9f9f9", font=("Arial", 8)).pack(side=tk.LEFT)
-            entry_min = tk.Spinbox(y_frame, from_=-100000, to=100000, increment=1, width=5)
+            entry_min = tk.Spinbox(y_frame, from_=-100000.0, to=100000.0, increment=1.0, width=5)
             entry_min.pack(side=tk.LEFT, padx=2)
             tk.Label(y_frame, text="-", bg="#f9f9f9").pack(side=tk.LEFT)
-            entry_max = tk.Spinbox(y_frame, from_=-100000, to=100000, increment=1, width=5)
+            entry_max = tk.Spinbox(y_frame, from_=-100000.0, to=100000.0, increment=1.0, width=5)
             entry_max.pack(side=tk.LEFT, padx=2)
 
             self.y_min_entries.append(entry_min)
             self.y_max_entries.append(entry_max)
 
-        self.fig = plt.Figure(figsize=(6, 8), dpi=100)
-        self.axes = []
-        for i in range(4):
-            ax = self.fig.add_subplot(4, 1, i+1)
-            ax.set_ylabel(f"Przebieg {i+1}")
+        # Wykresy (Matplotlib)
+        self.fig = plt.Figure(figsize=(6, 10), dpi=100)
+        self.axes =[]
+        for i in range(5):
+            ax = self.fig.add_subplot(5, 1, i+1)
+            ax.set_ylabel(f"Przeb. {i+1}", fontsize=8)
             ax.grid(True)
-            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
             self.axes.append(ax)
 
         self.fig.tight_layout()
@@ -288,6 +289,74 @@ class BlackBoxInterpreter:
         self.scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
 
         self.notebook.select(self.tab_general)
+
+    # --- USTAWIENIA (NOWE OKNO) ---
+    def open_settings(self):
+        win = tk.Toplevel(self.root)
+        win.title("Ustawienia programu")
+        win.geometry("450x220")
+        win.resizable(False, False)
+        win.grab_set() 
+
+        # Pozycjonowanie na środku
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 225
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 110
+        win.geometry(f"+{x}+{y}")
+
+        # Jednostki osi X
+        tk.Label(win, text="Jednostki osi X:").grid(row=0, column=0, padx=10, pady=10, sticky="e")
+        unit_var = tk.StringVar(value=self.settings['x_unit'])
+        ttk.Combobox(win, textvariable=unit_var, values=["Próbki", "Czas"], state="readonly", width=15).grid(row=0, column=1, padx=10, pady=10, sticky="w")
+        
+        # Czas - krótki
+        tk.Label(win, text='Czas próbkowania "przebieg krótki" [us]:').grid(row=1, column=0, padx=10, pady=5, sticky="e")
+        dt_short_var = tk.StringVar(value=str(self.settings['dt_short']))
+        tk.Spinbox(win, from_=0.1, to=10.0, increment=0.1, textvariable=dt_short_var, width=8).grid(row=1, column=1, padx=10, pady=5, sticky="w")
+        
+        # Czas - długi
+        tk.Label(win, text='Czas próbkowania "przebieg długi" [us]:').grid(row=2, column=0, padx=10, pady=5, sticky="e")
+        dt_long_var = tk.StringVar(value=str(self.settings['dt_long']))
+        tk.Spinbox(win, from_=0.1, to=10.0, increment=0.1, textvariable=dt_long_var, width=8).grid(row=2, column=1, padx=10, pady=5, sticky="w")
+        
+        # Długość listy
+        tk.Label(win, text="Długość listy:").grid(row=3, column=0, padx=10, pady=5, sticky="e")
+        len_var = tk.StringVar(value=str(self.settings['dropdown_len']))
+        tk.Spinbox(win, from_=10, to=100, increment=1, textvariable=len_var, width=8).grid(row=3, column=1, padx=10, pady=5, sticky="w")
+        
+        btn_frame = tk.Frame(win)
+        btn_frame.grid(row=4, column=0, columnspan=2, pady=15)
+        tk.Button(btn_frame, text="Zapisz", command=lambda: self.save_settings(win, unit_var, dt_short_var, dt_long_var, len_var), width=10).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="Anuluj", command=win.destroy, width=10).pack(side=tk.LEFT, padx=10)
+
+    def save_settings(self, win, unit_var, dt_short_var, dt_long_var, len_var):
+        try:
+            self.settings['x_unit'] = unit_var.get()
+            self.settings['dt_short'] = float(dt_short_var.get().replace(',', '.'))
+            self.settings['dt_long'] = float(dt_long_var.get().replace(',', '.'))
+            self.settings['dropdown_len'] = int(len_var.get())
+
+            # Zmiana etykiety X (Próbki / Czas)
+            unit_str = "[us]:" if self.settings['x_unit'] == 'Czas' else ":"
+            self.lbl_range.config(text=f"Zakres (X) {unit_str}")
+
+            # Aktualizacja długości list
+            for cb in self.combos:
+                cb.config(height=self.settings['dropdown_len'])
+
+            win.destroy()
+
+            # Zmiana jednostki oznacza, że stary zakres trzeba skasować
+            self.current_window_size = None
+            self.current_view_start = 0.0
+            self.entry_sample_start.delete(0, tk.END)
+            self.entry_sample_end.delete(0, tk.END)
+
+            # Odśwież wykresy, jeśli są jakieś wczytane dane
+            if self.current_selected_event_index:
+                self.draw_waveforms()
+
+        except ValueError:
+            messagebox.showerror("Błąd", "Wprowadzono niepoprawne wartości numeryczne w ustawieniach.")
 
     def configure_text_tags(self, text_widget):
         text_widget.tag_config("header", foreground="blue", font=("Arial", 10, "bold"))
@@ -362,8 +431,10 @@ class BlackBoxInterpreter:
                 self.event_data_values_map = parsed_data['data_map']
                 self.event_waveform_values_map = parsed_data['waveform_map']
 
-                self.current_selected_event_index = None
+                self.current_selected_event_index = "1"
                 self.entry_event_idx.delete(0, tk.END)
+                self.entry_event_idx.insert(0, "1")
+                
                 self.entry_sample_start.delete(0, tk.END)
                 self.entry_sample_end.delete(0, tk.END)
                 
@@ -395,7 +466,7 @@ class BlackBoxInterpreter:
             lines = event_list_text.splitlines()
             if lines:
                 self.text_alarms_list.insert(tk.END, lines[0] + "\n", "table_header")
-                self.text_alarms_list.insert(tk.END, lines[1] + "\n", "table_header") # Separator
+                self.text_alarms_list.insert(tk.END, lines[1] + "\n", "table_header") 
                 for line in lines[2:]:
                     self.text_alarms_list.insert(tk.END, line + "\n", "list_item")
         else:
@@ -408,7 +479,7 @@ class BlackBoxInterpreter:
             lines = event_list_text.splitlines()
             if lines:
                 self.text_waveforms_list_preview.insert(tk.END, lines[0] + "\n", "table_header")
-                self.text_waveforms_list_preview.insert(tk.END, lines[1] + "\n", "table_header") # Separator
+                self.text_waveforms_list_preview.insert(tk.END, lines[1] + "\n", "table_header") 
                 for line in lines[2:]:
                     self.text_waveforms_list_preview.insert(tk.END, line + "\n", "list_item")
         else:
@@ -442,7 +513,6 @@ class BlackBoxInterpreter:
         if not sorted_indices:
             return None
 
-        # --- Przygotowanie danych do tabeli ---
         table_data = []
         
         headers = ["[Index]"]
@@ -461,27 +531,22 @@ class BlackBoxInterpreter:
                 row.append(value_map[found_params['id']].get(idx, ""))
             table_data.append(row)
 
-        # --- Obliczanie szerokości kolumn ---
         col_widths = [0] * len(headers)
         for row in table_data:
             for i, val in enumerate(row):
                 if len(val) > col_widths[i]:
                     col_widths[i] = len(val)
 
-        # --- Formatowanie ---
-        formatted_lines = []
+        formatted_lines =[]
         
-        # Nagłówek
         header_row = table_data[0]
         header_str = " | ".join(val.ljust(width) for val, width in zip(header_row, col_widths))
         formatted_lines.append(header_str)
         
-        # Separator
-        separator_row = ["-" * width for width in col_widths]
+        separator_row =["-" * width for width in col_widths]
         separator_str = "-+-".join(separator_row)
         formatted_lines.append(separator_str)
 
-        # Dane
         for row in table_data[1:]:
             line_str = " | ".join(val.ljust(width) for val, width in zip(row, col_widths))
             formatted_lines.append(line_str)
@@ -489,18 +554,17 @@ class BlackBoxInterpreter:
         return "\n".join(formatted_lines)
 
     def extract_parameters(self, content, delimiter):
-        general = []
+        general =[]
         data_names = []
-        waveform_names = []
+        waveform_names =[]
         data_map = {}
         waveform_map = {}
 
-        # Używamy strumienia IO dla csv.reader
         f = io.StringIO(content)
         reader = csv.reader(f, delimiter=delimiter)
 
         current_param_name = None
-        current_data_rows = [] # Przechowujemy listy pól, nie linie tekstu
+        current_data_rows =[] 
 
         def close_section():
             nonlocal current_param_name
@@ -510,7 +574,6 @@ class BlackBoxInterpreter:
                 if data_line_count == 1:
                     val = "BRAK"
                     first_row = current_data_rows[0]
-                    # first_row to lista pól [Index, Value1, Value2...]
                     valid_values = [p for p in first_row[1:] if p.strip()]
                     if valid_values:
                         val = valid_values[0].strip()
@@ -518,14 +581,13 @@ class BlackBoxInterpreter:
                 
                 elif data_line_count > 1:
                     first_row = current_data_rows[0]
-                    valid_values = [p for p in first_row[1:] if p.strip()]
+                    valid_values =[p for p in first_row[1:] if p.strip()]
                     values_count_in_line = len(valid_values)
 
                     if values_count_in_line == 1:
                         data_names.append(current_param_name)
                         v_map = {}
                         for row in current_data_rows:
-                            # Zakładamy format: [Index, Value]
                             if len(row) >= 2:
                                 idx = row[0].strip()
                                 val = row[1].strip()
@@ -555,10 +617,9 @@ class BlackBoxInterpreter:
                         waveform_map[current_param_name] = w_map
 
         for row in reader:
-            if not row: # Pusta linia w pliku (ale nie pusta lista pól)
+            if not row:
                 continue
 
-            # Sprawdzenie czy wiersz to same separatory (puste stringi)
             is_separator_line = not any(field.strip() for field in row)
 
             if row[0].startswith("Event Index"):
@@ -567,12 +628,12 @@ class BlackBoxInterpreter:
                     current_param_name = row[1].strip()
                 else:
                     current_param_name = "Nieznany"
-                current_data_rows = []
+                current_data_rows =[]
 
             elif is_separator_line:
                 close_section()
                 current_param_name = None
-                current_data_rows = []
+                current_data_rows =[]
             
             else:
                 if current_param_name is not None:
@@ -606,7 +667,7 @@ class BlackBoxInterpreter:
             lines = event_list_text.splitlines()
             if lines:
                 self.text_main.insert(tk.END, lines[0] + "\n", "table_header")
-                self.text_main.insert(tk.END, lines[1] + "\n", "table_header") # Separator
+                self.text_main.insert(tk.END, lines[1] + "\n", "table_header") 
                 for line in lines[2:]:
                     self.text_main.insert(tk.END, line + "\n", "list_item")
         else:
@@ -636,7 +697,7 @@ class BlackBoxInterpreter:
         for ax in self.axes:
             ax.clear()
             ax.grid(True)
-            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+            ax.xaxis.set_major_locator(MaxNLocator(integer=(self.settings['x_unit'] == 'Próbki')))
         self.canvas.draw()
         self.scroll_x.set(0, 1)
 
@@ -644,7 +705,7 @@ class BlackBoxInterpreter:
         self.entry_sample_start.delete(0, tk.END)
         self.entry_sample_end.delete(0, tk.END)
         self.current_window_size = None
-        self.current_view_start = 0
+        self.current_view_start = 0.0
 
         for e in self.y_min_entries:
             e.delete(0, tk.END)
@@ -661,19 +722,16 @@ class BlackBoxInterpreter:
             self.current_selected_event_index = idx_str
             self.display_categorized_params()
             
-            s_str = self.entry_sample_start.get().strip()
-            e_str = self.entry_sample_end.get().strip()
+            s_str = self.entry_sample_start.get().strip().replace(',', '.')
+            e_str = self.entry_sample_end.get().strip().replace(',', '.')
             
             self.current_window_size = None
-            self.current_view_start = 0
-            
-            user_start = 0
-            user_end = None
+            self.current_view_start = 0.0
             
             if s_str and e_str:
                 try:
-                    user_start = int(s_str)
-                    user_end = int(e_str)
+                    user_start = float(s_str)
+                    user_end = float(e_str)
                     if user_start < user_end:
                         self.current_view_start = user_start
                         self.current_window_size = user_end - user_start
@@ -685,10 +743,10 @@ class BlackBoxInterpreter:
             messagebox.showwarning("Uwaga", "Podaj numer zdarzenia.")
 
     def on_scroll_change(self, action, *args):
-        if self.current_window_size is None or self.max_data_length == 0:
+        if self.current_window_size is None or self.max_x_value == 0:
             return
 
-        total_scrollable = self.max_data_length
+        total_scrollable = self.max_x_value
         if total_scrollable <= self.current_window_size:
             return
 
@@ -696,15 +754,15 @@ class BlackBoxInterpreter:
 
         if action == 'moveto':
             fraction = float(args[0])
-            new_start = int(fraction * total_scrollable)
+            new_start = fraction * total_scrollable
         elif action == 'scroll':
-            count = int(args[0])
-            step = max(1, int(self.current_window_size * 0.1))
+            count = float(args[0])
+            step = max(1.0, self.current_window_size * 0.1)
             new_start += count * step
 
         max_start = total_scrollable - self.current_window_size
         if new_start < 0: 
-            new_start = 0
+            new_start = 0.0
         if new_start > max_start: 
             new_start = max_start
             
@@ -714,10 +772,19 @@ class BlackBoxInterpreter:
     def draw_waveforms(self, update_scroll_only=False):
         event_idx = self.current_selected_event_index
         
-        current_max_len = 0
+        # Obliczenie długości maksymalnej z przebiegów dla danego zdarzenia
+        max_len_for_event = 0
+        if event_idx:
+            for param, events_data in self.event_waveform_values_map.items():
+                if event_idx in events_data:
+                    l = len(events_data[event_idx])
+                    if l > max_len_for_event:
+                        max_len_for_event = l
+
+        current_max_x = 0.0
         active_plots_data = [] 
 
-        for i in range(4):
+        for i in range(5):
             selected_waveform = self.combos[i].get()
             data_points = None
             
@@ -726,21 +793,34 @@ class BlackBoxInterpreter:
                 if event_idx in events_data:
                     y_values = events_data[event_idx]
                     data_len = len(y_values)
-                    if data_len > current_max_len:
-                        current_max_len = data_len
-                    data_points = (range(data_len), y_values)
+                    
+                    # LOGIKA PRZELICZANIA NA CZAS (X)
+                    if self.settings['x_unit'] == 'Czas':
+                        # Uznajemy za "Długi", jeśli jego długość to chociaż połowa najdłuższego
+                        is_long = data_len > (max_len_for_event * 0.5)
+                        dt = self.settings['dt_long'] if is_long else self.settings['dt_short']
+                        x_values = [i * dt for i in range(data_len)]
+                    else:
+                        x_values = list(range(data_len))
+
+                    if x_values:
+                        if x_values[-1] > current_max_x:
+                            current_max_x = x_values[-1]
+
+                    data_points = (x_values, y_values)
             
             active_plots_data.append((selected_waveform, data_points))
 
-        self.max_data_length = current_max_len
+        self.max_x_value = current_max_x
 
-        for i in range(4):
+        for i in range(5):
             ax = self.axes[i]
             
             ax.clear()
             ax.grid(True)
-            ax.xaxis.set_major_locator(MaxNLocator(integer=True)) 
-            ax.set_ylabel(f"Przebieg {i+1}") 
+            # Pokazujemy int na X tylko, jeśli ustawiono jednostkę 'Próbki'
+            ax.xaxis.set_major_locator(MaxNLocator(integer=(self.settings['x_unit'] == 'Próbki'))) 
+            ax.set_ylabel(f"Przebieg {i+1}", fontsize=8) 
 
             name, points = active_plots_data[i]
             
@@ -758,7 +838,7 @@ class BlackBoxInterpreter:
                     pass
 
             if not name:
-                ax.set_title("Nie wybrano parametru")
+                ax.set_title("Nie wybrano parametru", fontsize=9)
                 continue
             
             if points:
@@ -775,16 +855,17 @@ class BlackBoxInterpreter:
                     ax.set_ylim(y_limit)
 
             else:
-                ax.set_title(f"Brak danych lub zdarzenia {event_idx}")
+                ax.set_title(f"Brak danych lub zdarzenia {event_idx}", fontsize=9)
 
         self.fig.tight_layout()
         self.canvas.draw()
         
-        if self.current_window_size is not None and self.max_data_length > 0:
-            if self.current_window_size < self.max_data_length:
-                first = self.current_view_start / self.max_data_length
-                last = (self.current_view_start + self.current_window_size) / self.max_data_length
-                self.scroll_x.set(first, last)
+        # Aktualizacja paska scrollowania
+        if self.current_window_size is not None and self.max_x_value > 0:
+            if self.current_window_size < self.max_x_value:
+                first = self.current_view_start / self.max_x_value
+                last = (self.current_view_start + self.current_window_size) / self.max_x_value
+                self.scroll_x.set(max(0, min(1, first)), max(0, min(1, last)))
             else:
                 self.scroll_x.set(0, 1)
         else:
